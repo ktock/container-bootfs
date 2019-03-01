@@ -1,6 +1,6 @@
 FROM busybox:latest
 
-RUN mkdir /rootfs.castr
-VOLUME /rootfs.castr
+RUN mkdir -p /.bootfs/rootfs.castr
+VOLUME /.bootfs/rootfs.castr
 
 CMD tail -f /dev/null

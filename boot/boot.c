@@ -6,42 +6,28 @@
  * Licensed under Apache License, Version 2.0
  *
  ******************************************************************************/
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <mntent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <errno.h>
-#include <mntent.h>
 #include <sys/mount.h>
-#include <fcntl.h>
+#include <unistd.h>
 #include "parson/parson.h"
+#include "path.h"
 
-#include <sys/types.h>
-#include <pwd.h>
-
-#define DESYNC_BIN        "/desync"
-#define CASYNC_BIN        "/casync"
-#define DBCLIENT_BIN      "/dbclient"
-#define DBCLIENT_Y_BIN    "/dbclient_y"
-#define DEV_FUSE          "/dev/fuse"
-#define ETC_PASSWD        "/etc/passwd"
-#define ENTRYPOINT_MEMO   "/entrypoint_memo"
-#define CAIBX             "/rootfs.caibx"
-#define CATAR_MOUNT_DIR   "/rootfs.catar"
-#define CASTR_CACHE_DIR   "/rootfs.castr"
-#define ROOTFS_MOUNT_DIR  "/rootfs"
-#define MOUNTED_CATAR     "/rootfs.catar/rootfs"
-#define PROC_MOUNTS       "/proc/mounts"
-#define MOVED_PROC_MOUNTS "/rootfs/proc/mounts"
+/* Limit configuration */
 #define EXISTENCE_CHECK_LIMIT    1000000
-#define MAX_FILENAME_PATH_LENGTH 10000000000
+#define MAX_FILENAME_PATH_LENGTH 1000000
 
 #define access_file(path) access(path, F_OK)
 
 int access_dir(const char *path)
 {
   DIR* dir = opendir(path);
+  
   if (dir) {
     closedir(dir);
     return 0;
@@ -53,6 +39,7 @@ int access_dir(const char *path)
 int try_access_all(const char *targets[])
 {
   int i = 0;
+  
   while (targets[i] != NULL) {
     if (access_file(targets[i])
         && access_dir(targets[i])) {
@@ -61,6 +48,7 @@ int try_access_all(const char *targets[])
     }
     i++;
   }
+  
   return 0;
 }
 
@@ -68,6 +56,7 @@ int is_empty_dir(const char *dirname)
 {
   int n = 0;
   DIR *dir = opendir(dirname);
+  
   if (dir == NULL) {
     return -1;
   } else {
@@ -80,12 +69,14 @@ int is_empty_dir(const char *dirname)
     }
     closedir(dir);
   }
+  
   return 1;
 }
 
 int wait_if_empty_dir(const char *trydir, int trynum)
 {
   int try;
+  
   while ((try = is_empty_dir(trydir)) && trynum > 0) {
     if (try == -1) {
       fprintf(stderr, "Failed to check if empty: %s\n", strerror(errno));
@@ -97,6 +88,7 @@ int wait_if_empty_dir(const char *trydir, int trynum)
     fprintf(stderr, "%s is empty(timeout).\n", trydir);
     return -1;
   }
+  
   return 0;
 }
 
@@ -117,7 +109,7 @@ int mount_catar_from_caibx_lazily()
           CASTR_CACHE_DIR,
           "--store",
           getenv("BLOB_STORE"),
-          CAIBX,
+          CAIBX_FILE,
           CATAR_MOUNT_DIR,
           NULL };
     execv(desync_mount_args[0], desync_mount_args);
@@ -137,6 +129,7 @@ int mount_catar_from_caibx_lazily()
 int mount_rootfs_from_catar()
 {
   pid_t pid = fork();
+  
   if (pid == 0) {
     char *const casync_mount_args[]
       = { CASYNC_BIN,
@@ -154,6 +147,7 @@ int mount_rootfs_from_catar()
     fprintf(stderr, "Failed to mount rootfs with casync.\n");
     return -1;
   }
+  
   return 0;
 }
 
@@ -161,13 +155,14 @@ int switch_root(const char *new_rootfs)
 {
   struct mntent *ent;
   FILE *proc_mounts;
-  char *target = calloc(sizeof(char), MAX_FILENAME_PATH_LENGTH);
+  char *target;
 
   /* Each iteratoin has different role.
    * 1st: Trying to mount all target mount points.
-   * 2nd: Finding all mount points which hasn't been moved to under '/rootfs'
+   * 2nd: Finding all mount points which hasn't been moved to under new rootfs
    *      during 1st iteration.
    */
+  target = calloc(sizeof(char), MAX_FILENAME_PATH_LENGTH);
   for (int i = 0; i < 2; i++) {
     const char *proc_mounts_path = (i == 0) ? PROC_MOUNTS : MOVED_PROC_MOUNTS;
     proc_mounts = setmntent(proc_mounts_path, "r");
@@ -176,15 +171,12 @@ int switch_root(const char *new_rootfs)
       return -1;
     }
     while ((ent = getmntent(proc_mounts))) {
-      /* Following directories which have prefix '/rootfs' won't be 
-       * move-mounted.
-       * + /rootfs.castr
-       * + /rootfs.catar
-       * + /rootfs
-       */
+      
+      /* Directories which have prefix '/.bootfs/rootfs' won't be moved. */
       if (strcmp(ent->mnt_dir, "/")
           && strstr(ent->mnt_dir, ROOTFS_MOUNT_DIR) - ent->mnt_dir) {
-        sprintf(target, "%s/%s", new_rootfs, ent->mnt_dir);
+        snprintf(target, MAX_FILENAME_PATH_LENGTH,
+                 "%s/%s", new_rootfs, ent->mnt_dir);
         if (mount(ent->mnt_dir, target, NULL, MS_MOVE, NULL)
             && i) {
           fprintf(stderr, "Warning: Failed to move mount %s: %s.\n",
@@ -194,6 +186,7 @@ int switch_root(const char *new_rootfs)
     }
     endmntent(proc_mounts);
   }
+  free(target);
   if (chdir(new_rootfs)) {
     fprintf(stderr, "Failed to chdir to %s: %s.\n",
             new_rootfs, strerror(errno));
@@ -254,20 +247,20 @@ int main(int argc, char *argv[])
 {
   /* Emulate original rootfs. */
   fprintf(stderr, "Checking dependencies...\n");
-
   char const* reqired_files[]
-    = { PROC_MOUNTS,
+    = { CASYNC_BIN,
         DESYNC_BIN,
-        CASYNC_BIN,
         DBCLIENT_BIN,
         DBCLIENT_Y_BIN,
+        FUSERMOUNT_BIN,
+        PROC_MOUNTS,
         DEV_FUSE,
         ETC_PASSWD,
-        ENTRYPOINT_MEMO,
-        CAIBX,
-        CATAR_MOUNT_DIR,
-        CASTR_CACHE_DIR,
         ROOTFS_MOUNT_DIR,
+        CASTR_CACHE_DIR,
+        CATAR_MOUNT_DIR,
+        CAIBX_FILE,
+        ENTRYPOINT_MEMO,
         NULL };
   if (try_access_all(reqired_files)) {
     fprintf(stderr, "Required file doesnt exist.\n");
@@ -296,6 +289,6 @@ int main(int argc, char *argv[])
   }
 
   /* Execute app. */
-  fprintf(stderr, "Now, diving your app...\n");
+  fprintf(stderr, "Now, diving into your app...\n");
   execvp(args[0], (char * const*)args);
 }

@@ -17,7 +17,8 @@ ENV PATH=$PATH:${GOPATH}/bin
 RUN go get -u github.com/folbricht/desync/cmd/desync
 
 # Download busybox
-RUN wget https://busybox.net/downloads/binaries/1.30.0-i686/busybox
+ENV BUSYBOXVERSION=1.30.0-i686
+RUN wget https://busybox.net/downloads/binaries/${BUSYBOXVERSION}/busybox
 RUN chmod 755 ./busybox
 
 # Download docker

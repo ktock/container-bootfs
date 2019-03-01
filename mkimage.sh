@@ -68,21 +68,23 @@ if [ $# -lt 2 ] ; then
     echo "${0} ORG_IMAGE_TAG NEW_IMAGE_TAG"
     exit 1
 fi
-
 ORG_IMAGE_TAG="${1}"
 NEW_IMAGE_TAG="${2}"
+
+# Path information of mkimage container.
 BUSYBOX_BIN=/busybox
 DROPBEAR_BIN=/dbclient
-BOOT_BIN=/boot.src/boot
-DBCLIENT_Y_BIN=/boot.src/dbclient_y
-BOOT_BIN_ROOTREL=/boot
 CASYNC_BIN=$(which casync)
 DESYNC_BIN=$(which desync)
 FUSERMOUNT_BIN=$(which fusermount)
-ROOTFS_CATAR=/rootfs.catar
-ROOTFS_CAIBX=/rootfs.caibx
+BOOT_BIN=/boot.src/boot
+DBCLIENT_Y_BIN=/boot.src/dbclient_y
+CATAR_FILE=/rootfs.catar
+CAIBX_FILE=/rootfs.caibx
 ORG_ROOTFS_TAR=/org-rootfs.tar
 ORG_IMAGE_TAR=/org-image.tar
+
+# Path information of output directory.
 OUTPUT_DIR=/output
 ORG_ROOTFS_DIR="${OUTPUT_DIR}"/org-rootfs
 ORG_IMAGE_DIR="${OUTPUT_DIR}"/org-image
@@ -90,15 +92,32 @@ NEW_ROOTFS_DIR="${OUTPUT_DIR}"/new-rootfs
 NEW_IMAGE_DIR="${OUTPUT_DIR}"/new-image
 NEW_IMAGE_TAR="${OUTPUT_DIR}"/new-image.tar
 OUT_ROOTFS_STORE="${OUTPUT_DIR}"/rootfs.castr
-ROOTFS_UPPER_DIR="${NEW_ROOTFS_DIR}"/upper
+
+# Path information of new rootfs.
 ROOTFS_LOWER_DIR="${NEW_ROOTFS_DIR}"/lower
+ROOTFS_UPPER_DIR="${NEW_ROOTFS_DIR}"/upper
 ROOTFS_BIN_DIR="${ROOTFS_LOWER_DIR}"/bin
-ROOTFS_CACHE_DIR="${ROOTFS_LOWER_DIR}"/rootfs.castr
-ROOTFS_CATAR_DIR="${ROOTFS_LOWER_DIR}"/rootfs.catar
-ROOTFS_MOUNT_DIR="${ROOTFS_LOWER_DIR}"/rootfs
-ENTRYPOINT_MEMO="${ROOTFS_UPPER_DIR}"/entrypoint_memo
+ROOTFS_LOWER_BOOTFS_DIR="${ROOTFS_LOWER_DIR}"/.bootfs
+ROOTFS_UPPER_BOOTFS_DIR="${ROOTFS_UPPER_DIR}"/.bootfs
+ROOTFS_MOUNT_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs
+ROOTFS_CACHE_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs.castr
+ROOTFS_CATAR_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs.catar
+ROOTFS_CAIBX_BOOTFS_FILE="${ROOTFS_UPPER_BOOTFS_DIR}"/rootfs.caibx
+ROOTFS_ENTRYPOINT_MEMO_FILE="${ROOTFS_UPPER_BOOTFS_DIR}"/entrypoint_memo
+ROOTFS_BOOT_BIN_ROOT_RELATIVE=/bin/boot
+
+# Check Docker existance and original image pulled.
+docker -v
+check "Checking Docker existance."
+ORG_IMAGE_INFO=$(docker image ls "${ORG_IMAGE_TAG}" | sed "1d")
+if [ "${ORG_IMAGE_INFO}" == "" ] ; then
+    (>&2 echo "Fatal: Image \"${ORG_IMAGE_TAG}\" not found on your Docker. Pull it in advance.")
+    exit 1;
+fi
+
+# Prepare directories.
 if find "${OUTPUT_DIR}" -mindepth 1 -print -quit 2>/dev/null | grep -q . ; then
-    echo "Fatal: Attached output volume is not empty."
+    (>&2 echo "Fatal: Attached output volume is not empty.")
     exit 1;
 fi
 mkdir -p \
@@ -107,16 +126,14 @@ mkdir -p \
       "${NEW_ROOTFS_DIR}" \
       "${NEW_IMAGE_DIR}" \
       "${OUT_ROOTFS_STORE}" \
-      "${ROOTFS_UPPER_DIR}" \
       "${ROOTFS_LOWER_DIR}" \
+      "${ROOTFS_UPPER_DIR}" \
       "${ROOTFS_BIN_DIR}" \
-      "${ROOTFS_CACHE_DIR}" \
-      "${ROOTFS_CATAR_DIR}" \
-      "${ROOTFS_MOUNT_DIR}"
-
-# Check existing Docker.
-docker -v
-check "Checking Docker existance."
+      "${ROOTFS_LOWER_BOOTFS_DIR}" \
+      "${ROOTFS_UPPER_BOOTFS_DIR}" \
+      "${ROOTFS_CACHE_BOOTFS_DIR}" \
+      "${ROOTFS_CATAR_BOOTFS_DIR}" \
+      "${ROOTFS_MOUNT_BOOTFS_DIR}"
 
 # Extract original image and rootfs.
 echo "Saving original image..."
@@ -137,25 +154,25 @@ mkdir "${ORG_ROOTFS_DIR}"/dev \
 
 # Generating catar, caibx, castr from rootfs.
 echo "Generating casync related files..."
-casync make "${ROOTFS_CATAR}" "${ORG_ROOTFS_DIR}"
+casync make "${CATAR_FILE}" "${ORG_ROOTFS_DIR}"
 check "Generating catar."
-casync make --store="${OUT_ROOTFS_STORE}" "${ROOTFS_CAIBX}" "${ROOTFS_CATAR}"
+casync make --store="${OUT_ROOTFS_STORE}" "${CAIBX_FILE}" "${CATAR_FILE}"
 check "Generating castr and caibx."
 
 # Construct lower layer of rootfs.
 echo "Constructing rootfs lower layer..."
-cp "${FUSERMOUNT_BIN}" "${ROOTFS_BIN_DIR}"/
-cp "${CASYNC_BIN}" "${ROOTFS_LOWER_DIR}"
-cp "${DESYNC_BIN}" "${ROOTFS_LOWER_DIR}"
-cp "${BUSYBOX_BIN}" "${ROOTFS_LOWER_DIR}"
-cp "${DROPBEAR_BIN}" "${ROOTFS_LOWER_DIR}"
-cp "${BOOT_BIN}" "${ROOTFS_LOWER_DIR}"
-cp "${DBCLIENT_Y_BIN}" "${ROOTFS_LOWER_DIR}"
+cp "${FUSERMOUNT_BIN}" "${ROOTFS_BIN_DIR}"
+cp "${BOOT_BIN}"       "${ROOTFS_BIN_DIR}"
+cp "${BUSYBOX_BIN}"    "${ROOTFS_BIN_DIR}"
+cp "${CASYNC_BIN}"     "${ROOTFS_BIN_DIR}"
+cp "${DESYNC_BIN}"     "${ROOTFS_BIN_DIR}"
+cp "${DROPBEAR_BIN}"   "${ROOTFS_BIN_DIR}"
+cp "${DBCLIENT_Y_BIN}" "${ROOTFS_BIN_DIR}"
 import_so_dependency "${FUSERMOUNT_BIN}" "${ROOTFS_LOWER_DIR}"
-import_so_dependency "${CASYNC_BIN}" "${ROOTFS_LOWER_DIR}"
-import_so_dependency "${DESYNC_BIN}" "${ROOTFS_LOWER_DIR}"
-import_so_dependency "${DROPBEAR_BIN}" "${ROOTFS_LOWER_DIR}"
-find /lib -name libnss* | while read TARGET_SO  # for getpwuid() in SSH
+import_so_dependency "${CASYNC_BIN}"     "${ROOTFS_LOWER_DIR}"
+import_so_dependency "${DESYNC_BIN}"     "${ROOTFS_LOWER_DIR}"
+import_so_dependency "${DROPBEAR_BIN}"   "${ROOTFS_LOWER_DIR}"
+find /lib -name "libnss*" | while read TARGET_SO  # for getpwuid() in SSH client
 do
     ORG_TARGET_SO_DIR=$(dirname "${TARGET_SO}")
     NEW_TARGET_SO_DIR="${ROOTFS_LOWER_DIR}/${ORG_TARGET_SO_DIR}"
@@ -165,11 +182,11 @@ done
 
 # Construct upper layer of rootfs.
 echo "Constructing rootfs upper layer..."
-cp -r "${ORG_ROOTFS_DIR}"/etc "${ROOTFS_UPPER_DIR}" # for getpwuid() in SSH
+cp -r "${ORG_ROOTFS_DIR}"/etc "${ROOTFS_UPPER_DIR}" # for getpwuid() in SSH client
 ORG_IMAGE_MANIFEST_JSON="${ORG_IMAGE_DIR}"/manifest.json
 ORG_IMAGE_CONFIG_JSON="${ORG_IMAGE_DIR}"/$(jq -r '.[0].Config' "${ORG_IMAGE_MANIFEST_JSON}")
-cp "${ROOTFS_CAIBX}" "${ROOTFS_UPPER_DIR}"
-jq '.config.Entrypoint' "${ORG_IMAGE_CONFIG_JSON}" > "${ENTRYPOINT_MEMO}"
+cp "${CAIBX_FILE}" "${ROOTFS_CAIBX_BOOTFS_FILE}"
+jq '.config.Entrypoint' "${ORG_IMAGE_CONFIG_JSON}" > "${ROOTFS_ENTRYPOINT_MEMO_FILE}"
 check "Memorize entrypoint bin."
 
 # Generate new image.
@@ -177,7 +194,7 @@ echo "Generating new image..."
 NEW_IMAGE_MANIFEST_JSON="${NEW_IMAGE_DIR}"/manifest.json
 NEW_IMAGE_CONFIG_JSON="${NEW_IMAGE_DIR}"/org-config.json
 cat "${ORG_IMAGE_CONFIG_JSON}" \
-    | jq '.config.Entrypoint = [ "'"${BOOT_BIN_ROOTREL}"'" ]' \
+    | jq '.config.Entrypoint = [ "'"${ROOTFS_BOOT_BIN_ROOT_RELATIVE}"'" ]' \
     | jq '.history = []' \
     | jq '.rootfs.diff_ids = []' > "${NEW_IMAGE_CONFIG_JSON}"
 check "Generating new image config json."
@@ -201,5 +218,6 @@ cat "${TMPFILE}" > "${NEW_IMAGE_MANIFEST_JSON}"
 tar cf "${NEW_IMAGE_TAR}" --directory="${NEW_IMAGE_DIR}" .
 check "Generating new image tarball."
 
+# Load new image.
 docker load -i "${NEW_IMAGE_TAR}"
 check "Loading new image."

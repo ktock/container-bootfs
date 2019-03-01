@@ -9,13 +9,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include "path.h"
 
 int main(int argc, char *argv[])
 {
   const char **args = calloc(sizeof(char *), argc + 1);
   int argpos = 0;
   
-  args[argpos++] = "/dbclient";
+  args[argpos++] = DBCLIENT_BIN;
   args[argpos++] = "-y";
   for (int i = 1; i < argc; i++) {
     args[argpos++] = argv[i];
