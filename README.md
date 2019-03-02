@@ -76,6 +76,7 @@ Some of the TODOs are listed below.
 - [ ] We make blobs only from the original view of *rootfs*, not from *layers*. This means we through away the layer information of the original image.
 - [ ] We can see casync and desync processes from any app, thus can break the world by reaping them. We need to `unshare(2)` PID namespace between setup-related processes and the others.
 - [ ] Currently, we haven't gotten any trouble by move mounting from new rootfs to `/`, which could affect to casync and desync processes which rely on directories or files in original rootfs (like pulled blobs). But, move mounting possibly could affect them in dangerous ways. Maybe we need to `unshare(2)` mount namespaces between setup-related processes and the other.
+- [ ] If desync cannot pull enough blobs, it leads to failure or unstable behavior on FUSE-mounted rootfs, which means no static analysis when it FUSE-mounts rootfs and we might need to make it.
 
 ## Play with sample.
 
