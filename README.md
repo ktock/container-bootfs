@@ -1,7 +1,7 @@
 # Container Bootfs ([casync](https://github.com/systemd/casync) and [desync](https://github.com/folbricht/desync) inside.)
 
 ## About bootfs
-__Container Bootfs__(__bootfs__ below.) aims to achieve block-level image chunking, de-duplication and lazy-pull execution without any modifications on container runtimes or registries and without any dedicated NFS infrastructure.
+__Container Bootfs__(__bootfs__ below.) is an image converter aiming to minimize image size and speed up boot time with block-level image chunking, de-duplication and lazy-pull execution without any modifications on container runtimes, registries nor any dedicated NFS infrastructure.
 The status of this project is __Rough PoC__, and bootfs is incomplete as mentioned later.
 Currently, we leverage [casync](https://github.com/systemd/casync) and [desync](https://github.com/folbricht/desync) for provisioning rootfs and lazy-pulling image data.
 
