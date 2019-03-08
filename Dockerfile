@@ -3,6 +3,9 @@ FROM ubuntu:latest
 # Install Basic Components
 RUN apt update -y && apt install -y fuse jq wget gcc make golang git curl
 
+# Install genisoimage
+RUN apt install -y genisoimage
+
 # Install casync
 RUN apt install -y casync
 

@@ -9,11 +9,16 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <linux/loop.h>
 #include <mntent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/sysmacros.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include "parson/parson.h"
 #include "path.h"
@@ -92,7 +97,7 @@ int wait_if_empty_dir(const char *trydir, int trynum)
   return 0;
 }
 
-int mount_catar_from_caibx_lazily()
+int mount_archive_from_caibx_lazily()
 {
   pid_t pid = fork();
   
@@ -110,7 +115,7 @@ int mount_catar_from_caibx_lazily()
           "--store",
           getenv("BLOB_STORE"),
           CAIBX_FILE,
-          CATAR_MOUNT_DIR,
+          ARCHIVE_MOUNT_DIR,
           NULL };
     execv(desync_mount_args[0], desync_mount_args);
     close(devnull);
@@ -118,15 +123,146 @@ int mount_catar_from_caibx_lazily()
     fprintf(stderr, "Failed to fork desync process.\n");
     return -1;
   }
-  if (wait_if_empty_dir(CATAR_MOUNT_DIR,
+  if (wait_if_empty_dir(ARCHIVE_MOUNT_DIR,
                         EXISTENCE_CHECK_LIMIT)) {
-    fprintf(stderr, "Failed to mount catar with desync.\n");
+    fprintf(stderr, "Failed to mount archive with desync.\n");
     return -1;
   }
   return 0;
 }
 
-int mount_rootfs_from_catar()
+int get_loopdev_unused_minor_num()
+{
+  int max = -1, this;
+  char *sys_block = SYS_DEV_BLOCK;
+  DIR *dir;
+  struct dirent *dirent;
+  char *backing_file = calloc(sizeof(char), MAX_FILENAME_PATH_LENGTH);
+  
+  if((dir = opendir(sys_block))) {
+    for(dirent = readdir(dir);
+        dirent;
+        dirent = readdir(dir)) {
+      if(strcmp(dirent->d_name, "." ) != 0
+         && strcmp(dirent->d_name, ".." ) != 0) {
+        
+        /* extract interger and compare from filename matchs "loop[0-9]+" */
+        if (strstr(dirent->d_name, "loop") == dirent->d_name) {
+          errno = 0;
+          this = (int)strtol(dirent->d_name + 4, NULL, 0);
+          if (errno == 0 && this > max) {
+            max = this;
+
+            /* 
+             * Check if any file mapped to the loopback device. 
+             * https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-block-loop
+             */
+            snprintf(backing_file, MAX_FILENAME_PATH_LENGTH,
+                     "%s/%s/%s", sys_block, dirent->d_name, "loop/backing_file");
+            if (access_file(backing_file)) {
+          
+              /* unused loop device found. */
+              return this;
+            }
+          }
+        }
+      }
+    }
+  } else {
+    fprintf(stderr, "Failed to open %s.: %s\n", sys_block, strerror(errno));
+    return -1;
+  }
+  
+  return max + 1;
+}
+
+static void rmloopdev ()
+{
+  if (access_file(DEV_LOOP_ISO) == 0) {
+    if (unlink(DEV_LOOP_ISO)) {
+      fprintf(stderr, "Failed to remove loopdev %s.: %s\n",
+              DEV_LOOP_ISO, strerror(errno));
+    }
+  }
+}
+
+int mount_rootfs_from_iso9660(const char *archive, const char *target)
+{
+  int archive_fd = -1, loopdev_fd = -1, minor;
+  struct loop_info64 info;
+
+  /* Get unused loopback device minor num. */
+  if ((minor = get_loopdev_unused_minor_num()) < 0) {
+    fprintf(stderr, "Failed to find usable loopback device.\n");
+    goto error;
+  }
+
+  /* Mknod loopback device node. */
+  if(mknod(DEV_LOOP_ISO,
+           S_IRUSR | S_IWUSR |
+           S_IRGRP | S_IWGRP |
+           S_IROTH | S_IWOTH |
+           S_IFBLK,
+           makedev(LOOP_DEV_MAJOR_NUM, minor))) {
+    fprintf(stderr, "Failed to mknod device %s(minor: %d): %s\n",
+            DEV_LOOP_ISO, minor, strerror(errno));
+    goto error;
+  }
+  atexit(rmloopdev);
+
+  /* Register the loopback device to kernel. */
+  if((archive_fd = open(archive, O_RDONLY)) < 0) {
+    fprintf(stderr, "Failed to open backing archive(%s): %s\n",
+            archive, strerror(errno));
+    goto error;
+  }
+  if((loopdev_fd = open(DEV_LOOP_ISO, O_RDWR)) < 0) {
+    fprintf(stderr, "Failed to open device(%s): %s\n",
+            DEV_LOOP_ISO, strerror(errno));
+    goto error;
+  }
+  if(ioctl(loopdev_fd, LOOP_SET_FD, archive_fd) < 0) {
+    fprintf(stderr, "Failed to set fd: %s\n", strerror(errno));
+    goto error;
+  }
+
+  /* Configure */
+  memset(&info, 0, sizeof(struct loop_info64));
+  info.lo_offset = 0;                   /* map isofile from topmost */
+  info.lo_sizelimit = 0;                /* max available */
+  info.lo_encrypt_type = LO_CRYPT_NONE; /* no encription */
+  info.lo_encrypt_key_size = 0;
+  info.lo_flags = LO_FLAGS_AUTOCLEAR;   /* detatch automatically on exit */
+  if(ioctl(loopdev_fd, LOOP_SET_STATUS64, &info)) {
+    fprintf(stderr, "Failed to set loop info: %s\n", strerror(errno));
+    goto error;
+  }
+  close(loopdev_fd);
+  close(archive_fd);
+  loopdev_fd = -1;
+  archive_fd = -1; 
+
+  /* Mount iso image. */
+  if (mount(DEV_LOOP_ISO, target, ISO_FS_TYPE, MS_RDONLY, NULL)) {
+    fprintf(stderr, "Failed to mount rootfs: %s\n", strerror(errno));
+    goto error;
+  }
+  
+  return 0;
+  
+  error:
+    if(archive_fd >= 0) {
+      close(archive_fd);
+    }   
+    if(loopdev_fd >= 0) {
+      ioctl(loopdev_fd, LOOP_CLR_FD, 0); 
+      close(loopdev_fd);
+    }
+    
+    return -1;
+}
+
+int mount_rootfs_from_catar(const char *archive, const char *target)
 {
   pid_t pid = fork();
   
@@ -134,16 +270,15 @@ int mount_rootfs_from_catar()
     char *const casync_mount_args[]
       = { CASYNC_BIN,
           "mount",
-          MOUNTED_CATAR,
-          ROOTFS_MOUNT_DIR,
+          (char *)archive,
+          (char *)target,
           NULL };
     execv(casync_mount_args[0], casync_mount_args);
   } else if (pid < 0) {
     fprintf(stderr, "Failed to fork casync process.\n");
     return -1;
   }
-  if (wait_if_empty_dir(ROOTFS_MOUNT_DIR,
-                        EXISTENCE_CHECK_LIMIT)) {
+  if (wait_if_empty_dir(target, EXISTENCE_CHECK_LIMIT)) {
     fprintf(stderr, "Failed to mount rootfs with casync.\n");
     return -1;
   }
@@ -248,7 +383,7 @@ int main(int argc, char *argv[])
   /* Emulate original rootfs. */
   fprintf(stderr, "Checking dependencies...\n");
   char const* reqired_files[]
-    = { CASYNC_BIN,
+    = { // CASYNC_BIN, // Uncomment if use casync as mount wrapper.
         DESYNC_BIN,
         DBCLIENT_BIN,
         DBCLIENT_Y_BIN,
@@ -258,7 +393,7 @@ int main(int argc, char *argv[])
         ETC_PASSWD,
         ROOTFS_MOUNT_DIR,
         CASTR_CACHE_DIR,
-        CATAR_MOUNT_DIR,
+        ARCHIVE_MOUNT_DIR,
         CAIBX_FILE,
         ENTRYPOINT_MEMO,
         NULL };
@@ -266,14 +401,18 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Required file doesnt exist.\n");
     return -1;
   }
-  fprintf(stderr, "Mounting catar lazily with desync...\n");
-  if (mount_catar_from_caibx_lazily()) {
-    fprintf(stderr, "Failed to prepare catar.\n");
+  fprintf(stderr, "Mounting archive file lazily with desync...\n");
+  if (mount_archive_from_caibx_lazily()) {
+    fprintf(stderr, "Failed to prepare archive file.\n");
     return 1;
   }
-  fprintf(stderr, "Mounting rootfs with casync...\n");
-  if (mount_rootfs_from_catar()) {
-    fprintf(stderr, "Failed to prepare rootfs.\n");
+  fprintf(stderr, "Mounting rootfs...\n");
+  if (
+      // Uncomment and switch if use casync as mount wrapper.
+      // mount_rootfs_from_catar(MOUNTED_ARCHIVE, ROOTFS_MOUNT_DIR)
+      mount_rootfs_from_iso9660(MOUNTED_ARCHIVE, ROOTFS_MOUNT_DIR)
+      ) {
+    fprintf(stderr, "Failed to prepare rootfs: %s\n", strerror(errno));
     return 1;
   }
 

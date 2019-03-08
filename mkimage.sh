@@ -17,6 +17,17 @@ function check {
     fi
 }
 
+function genarchive {
+    local ARCHIVE_FILE="${1}"
+    local ORG_ROOTFS_DIR="${2}"
+
+    # Uncomment and switch if use casync as mount wrapper.
+    # echo "Generating catar archive file..."
+    # casync make "${ARCHIVE_FILE}" "${ORG_ROOTFS_DIR}"
+    echo "Generating iso9006 image (Rock Ridge and SUSP supported)..."
+    genisoimage -Ro "${ARCHIVE_FILE}" "${ORG_ROOTFS_DIR}" > /dev/null 2>&1
+}
+
 function import_so_dependency {
     local TARGET_BIN="${1}"
     local TARGET_DIR="${2}"
@@ -79,7 +90,9 @@ DESYNC_BIN=$(which desync)
 FUSERMOUNT_BIN=$(which fusermount)
 BOOT_BIN=/boot.src/boot
 DBCLIENT_Y_BIN=/boot.src/dbclient_y
-CATAR_FILE=/rootfs.catar
+# Uncomment and switch if use casync as mount wrapper.
+# ARCHIVE_FILE=/rootfs.catar
+ARCHIVE_FILE=/rootfs.ar
 CAIBX_FILE=/rootfs.caibx
 ORG_ROOTFS_TAR=/org-rootfs.tar
 ORG_IMAGE_TAR=/org-image.tar
@@ -100,8 +113,9 @@ ROOTFS_BIN_DIR="${ROOTFS_LOWER_DIR}"/bin
 ROOTFS_LOWER_BOOTFS_DIR="${ROOTFS_LOWER_DIR}"/.bootfs
 ROOTFS_UPPER_BOOTFS_DIR="${ROOTFS_UPPER_DIR}"/.bootfs
 ROOTFS_MOUNT_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs
+ROOTFS_DEV_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs.dev
 ROOTFS_CACHE_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs.castr
-ROOTFS_CATAR_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs.catar
+ROOTFS_ARCHIVE_BOOTFS_DIR="${ROOTFS_LOWER_BOOTFS_DIR}"/rootfs.ar
 ROOTFS_CAIBX_BOOTFS_FILE="${ROOTFS_UPPER_BOOTFS_DIR}"/rootfs.caibx
 ROOTFS_ENTRYPOINT_MEMO_FILE="${ROOTFS_UPPER_BOOTFS_DIR}"/entrypoint_memo
 ROOTFS_BOOT_BIN_ROOT_RELATIVE=/bin/boot
@@ -131,8 +145,9 @@ mkdir -p \
       "${ROOTFS_BIN_DIR}" \
       "${ROOTFS_LOWER_BOOTFS_DIR}" \
       "${ROOTFS_UPPER_BOOTFS_DIR}" \
+      "${ROOTFS_DEV_BOOTFS_DIR}" \
       "${ROOTFS_CACHE_BOOTFS_DIR}" \
-      "${ROOTFS_CATAR_BOOTFS_DIR}" \
+      "${ROOTFS_ARCHIVE_BOOTFS_DIR}" \
       "${ROOTFS_MOUNT_BOOTFS_DIR}"
 
 # Extract original image and rootfs.
@@ -152,11 +167,11 @@ mkdir "${ORG_ROOTFS_DIR}"/dev \
       "${ORG_ROOTFS_DIR}"/proc \
       "${ORG_ROOTFS_DIR}"/sys
 
-# Generating catar, caibx, castr from rootfs.
+# Generating archive file, caibx, castr from rootfs.
 echo "Generating casync related files..."
-casync make "${CATAR_FILE}" "${ORG_ROOTFS_DIR}"
-check "Generating catar."
-casync make --store="${OUT_ROOTFS_STORE}" "${CAIBX_FILE}" "${CATAR_FILE}"
+genarchive "${ARCHIVE_FILE}" "${ORG_ROOTFS_DIR}"
+check "Generating rootfs archive."
+casync make --store="${OUT_ROOTFS_STORE}" "${CAIBX_FILE}" "${ARCHIVE_FILE}"
 check "Generating castr and caibx."
 
 # Construct lower layer of rootfs.
@@ -164,12 +179,14 @@ echo "Constructing rootfs lower layer..."
 cp "${FUSERMOUNT_BIN}" "${ROOTFS_BIN_DIR}"
 cp "${BOOT_BIN}"       "${ROOTFS_BIN_DIR}"
 cp "${BUSYBOX_BIN}"    "${ROOTFS_BIN_DIR}"
-cp "${CASYNC_BIN}"     "${ROOTFS_BIN_DIR}"
+# Uncomment if use casync as mount wrapper.
+# cp "${CASYNC_BIN}"     "${ROOTFS_BIN_DIR}"
 cp "${DESYNC_BIN}"     "${ROOTFS_BIN_DIR}"
 cp "${DROPBEAR_BIN}"   "${ROOTFS_BIN_DIR}"
 cp "${DBCLIENT_Y_BIN}" "${ROOTFS_BIN_DIR}"
 import_so_dependency "${FUSERMOUNT_BIN}" "${ROOTFS_LOWER_DIR}"
-import_so_dependency "${CASYNC_BIN}"     "${ROOTFS_LOWER_DIR}"
+# Uncomment if use casync as mount wrapper.
+# import_so_dependency "${CASYNC_BIN}"     "${ROOTFS_LOWER_DIR}" 
 import_so_dependency "${DESYNC_BIN}"     "${ROOTFS_LOWER_DIR}"
 import_so_dependency "${DROPBEAR_BIN}"   "${ROOTFS_LOWER_DIR}"
 find /lib -name "libnss*" | while read TARGET_SO  # for getpwuid() in SSH client
