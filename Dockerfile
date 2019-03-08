@@ -2,10 +2,6 @@ FROM ubuntu:latest
 
 # Install Basic Components
 RUN apt update -y && apt install -y fuse jq wget gcc make golang git curl
-RUN if [ "${HTTP_PROXY}" != "" ] ; then \
-      git config --global http.proxy ${HTTP_PROXY} ; fi
-RUN if [ "${HTTPS_PROXY}" != "" ] ; then \
-      git config --global https.proxy ${HTTP_PROXY} ; fi
 
 # Install casync
 RUN apt install -y casync
