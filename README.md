@@ -68,7 +68,7 @@ So currently, this is not perfect.
 Some of the TODOs are listed below.
 
 - [ ] We need to evaluate bootfs in quantitative ways (__critical !!!__).
-- [ ] We use move mount and casync's FUSE mount functionality to provision rootfs. So we need to use insecure runtime options `--cap-add SYS_ADMIN`, `--security-opt apparmor:unconfined` and `--device /dev/fuse`. We can find a same kind of issue related to FUSE on the [Docker repo](https://github.com/docker/for-linux/issues/321).
+- [ ] We use move mount and casync's FUSE mount functionality to provision rootfs. So we need to use insecure runtime options `--privileged` and `--device /dev/fuse`. We can find a same kind of issue related to FUSE on the [Docker repo](https://github.com/docker/for-linux/issues/321).
 - [ ] We cannot pull blobs from a container registry, which means we cannot combine boot image and the blobs into one container image and put it on a container registry. This is because we rely on desync for pulling blobs, which doesn't talk registry API. First we need to extend desync to support registry API, and then combine boot image and blobs using the way like [FILEgrain project](https://github.com/AkihiroSuda/filegrain) proposing. By doing it, we don't need dedicated remote chunk stores anymore.
 - [ ] We cannot use container's volume functionality if we don't make mountpoint placeholder (dummy files or directories) on the original rootfs in advance, because the provisioned rootfs is read-only and we cannot make the placeholder at runtime.
 - [ ] SSH client implementation is very ad-hoc. Let's say, desync rely on the system's ssh client and we are using [Dropbear](http://matt.ucc.asn.au/dropbear/dropbear.html) which may be fine. But, we inheriting original rootfs's user information configured in `/etc` (which is including `/etc/passwd` file, etc) without creating the bootfs-specific one. We also need to consider about around authentication, but currently we don't use any certifications and also ignore the dropbare's known_hosts checking.
@@ -128,8 +128,7 @@ sudo mv ${CONVERTER_OUTPUT_DIR}/rootfs.castr/* ${SSH_SERVER_STORE}/
 
 ### Run it.
 ```shell
-sudo docker run -it --cap-add SYS_ADMIN --security-opt apparmor:unconfined \
-                --device /dev/fuse \
+sudo docker run -it --privileged --device /dev/fuse \
                 --volumes-from ${LOCAL_CACHE_NAME} \
                 -e BLOB_STORE=ssh://root@${SSH_SERVER_IP}/store \
                 -e DROPBEAR_PASSWORD=root \
@@ -142,15 +141,15 @@ We can see how many block-level blobs are actually pulled lazily.
 On boot, the number of cached blobs would be like below.
 ```shell
 find ${LOCAL_CACHE_STORE} -name *.cacnk | wc -l
-96
+104
 find ${SSH_SERVER_STORE} -name *.cacnk | wc -l
-951
+966
 ```
 The number of blobs in `${LOCAL_CACHE_STORE}` will increase on access to the rootfs.
 After executing `top` command inside the container, the number of cached blobs would increase like below.
 ```shell
 find ${LOCAL_CACHE_STORE} -name *.cacnk | wc -l
-139
+142
 find ${SSH_SERVER_STORE} -name *.cacnk | wc -l
-951
+966
 ```
